@@ -317,6 +317,9 @@ type TaskPlan struct {
 	// the container to external will be dropped.
 	Hermetic bool `json:"hermetic"`
 
+	// HostMounts requested by the step.
+	HostMounts []HostMount `json:"host_mounts,omitempty"`
+
 	// Worker tags to influence placement of the container.
 	Tags Tags `json:"tags,omitempty"`
 
@@ -369,6 +372,9 @@ type RunPlan struct {
 	// Run in 'privileged' mode. What this means depends on the platform, but
 	// typically you expose your workers to more risk by enabling this.
 	Privileged bool `json:"privileged"`
+
+	// HostMounts requested by the step.
+	HostMounts []HostMount `json:"host_mounts,omitempty"`
 
 	// Worker tags to influence placement of the container.
 	Tags Tags `json:"tags,omitempty"`

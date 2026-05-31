@@ -51,6 +51,8 @@ type WorkerCommand struct {
 
 	RuntimeConfiguration `group:"Runtime Configuration"`
 
+	AllowedHostMounts string `long:"allowed-host-mounts" description:"Regular expression of host paths allowed to be mounted into task containers."`
+
 	// This refers to flags relevant to the operation of the Guardian runtime.
 	// For historical reasons it is namespaced under "garden" i.e. CONCOURSE_GARDEN instead of "guardian" i.e. CONCOURSE_GUARDIAN
 	Guardian GuardianRuntime `group:"Guardian Configuration" namespace:"garden"`

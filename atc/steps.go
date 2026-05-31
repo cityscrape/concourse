@@ -337,10 +337,17 @@ func (step *PutStep) Visit(v StepVisitor) error {
 	return v.VisitPut(step)
 }
 
+type HostMount struct {
+	Host      string `json:"host"`
+	Container string `json:"container,omitempty"`
+}
+
 type TaskStep struct {
 	Name              string            `json:"task"`
 	Privileged        bool              `json:"privileged,omitempty"`
 	Hermetic          bool              `json:"hermetic,omitempty"`
+	HostMounts        []HostMount       `json:"host_mounts,omitempty"`
+
 	ConfigPath        string            `json:"file,omitempty"`
 	Limits            *ContainerLimits  `json:"container_limits,omitempty"`
 	Config            *TaskConfig       `json:"config,omitempty"`
@@ -362,6 +369,7 @@ type RunStep struct {
 	Type       string           `json:"type"`
 	Params     Params           `json:"params,omitempty"`
 	Privileged bool             `json:"privileged,omitempty"`
+	HostMounts []HostMount      `json:"host_mounts,omitempty"`
 	Tags       Tags             `json:"tags,omitempty"`
 	Limits     *ContainerLimits `json:"container_limits,omitempty"`
 	Timeout    string           `json:"timeout,omitempty"`

@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"time"
 
 	"code.cloudfoundry.org/garden"
@@ -48,9 +50,10 @@ type GardenBackend struct {
 
 	maxContainers  int
 	requestTimeout time.Duration
-	createLock     TimeoutWithByPassLock
-	privilegedMode bespec.PrivilegedMode
-	allowedDevices []specs.LinuxDeviceCgroup
+	createLock        TimeoutWithByPassLock
+	privilegedMode    bespec.PrivilegedMode
+	allowedDevices    []specs.LinuxDeviceCgroup
+	allowedHostMounts *regexp.Regexp
 }
 
 //counterfeiter:generate . UserNamespace
@@ -140,6 +143,12 @@ func WithIOManager(ioManager IOManager) GardenBackendOpt {
 func WithAllowedDevices(devices []specs.LinuxDeviceCgroup) GardenBackendOpt {
 	return func(b *GardenBackend) {
 		b.allowedDevices = devices
+	}
+}
+
+func WithAllowedHostMounts(regex *regexp.Regexp) GardenBackendOpt {
+	return func(b *GardenBackend) {
+		b.allowedHostMounts = regex
 	}
 }
 
@@ -351,6 +360,45 @@ func (b *GardenBackend) createContainer(ctx context.Context, gdnSpec garden.Cont
 	maxUid, maxGid, err := b.userNamespace.MaxValidIds()
 	if err != nil {
 		return nil, fmt.Errorf("getting uid and gid maps: %w", err)
+	}
+
+	if mountsJSON, ok := gdnSpec.Properties["concourse.host_mounts"]; ok && mountsJSON != "" {
+		var hostMounts []struct {
+			HostPath      string `json:"host"`
+			ContainerPath string `json:"container"`
+		}
+		if err := json.Unmarshal([]byte(mountsJSON), &hostMounts); err != nil {
+			return nil, fmt.Errorf("parsing host mounts: %w", err)
+		}
+
+		for _, hm := range hostMounts {
+			if b.allowedHostMounts == nil {
+				return nil, fmt.Errorf("host mounts requested but worker does not allow host mounts")
+			}
+
+			if hm.ContainerPath == "" {
+				hm.ContainerPath = hm.HostPath
+			}
+
+			if !filepath.IsAbs(hm.HostPath) || !filepath.IsAbs(hm.ContainerPath) {
+				return nil, fmt.Errorf("host mount paths must be absolute: host=%s container=%s", hm.HostPath, hm.ContainerPath)
+			}
+
+			if !b.allowedHostMounts.MatchString(hm.HostPath) {
+				return nil, fmt.Errorf("host mount %s is not allowed by worker", hm.HostPath)
+			}
+
+			if _, err := os.Stat(hm.HostPath); err != nil {
+				return nil, fmt.Errorf("host mount %s does not exist on worker: %w", hm.HostPath, err)
+			}
+
+			gdnSpec.BindMounts = append(gdnSpec.BindMounts, garden.BindMount{
+				SrcPath: hm.HostPath,
+				DstPath: hm.ContainerPath,
+				Mode:    garden.BindMountModeRW,
+				Origin:  garden.BindMountOriginHost,
+			})
+		}
 	}
 
 	oci, err := bespec.OciSpec(b.initBinPath, b.seccompProfile, b.seccompProfileFuse, b.ociHooks, b.privilegedMode, gdnSpec, maxUid, maxGid, b.allowedDevices)

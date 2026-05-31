@@ -475,6 +475,17 @@ func (step *TaskStep) containerSpec(logger lager.Logger, state RunState, imageSp
 		containerSpec.Limits.Memory = (*uint64)(config.Limits.Memory)
 	}
 
+	for _, hm := range step.plan.HostMounts {
+		containerPath := hm.Container
+		if containerPath == "" {
+			containerPath = hm.Host
+		}
+		containerSpec.HostMounts = append(containerSpec.HostMounts, runtime.HostMount{
+			HostPath:      hm.Host,
+			ContainerPath: containerPath,
+		})
+	}
+
 	return containerSpec, nil
 }
 

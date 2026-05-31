@@ -2,6 +2,7 @@ package gardenruntime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -215,6 +216,13 @@ func (worker *Worker) createGardenContainer(
 		Properties: garden.Properties{
 			userPropertyName: fetchedImage.Metadata.User,
 		},
+	}
+
+	if len(containerSpec.HostMounts) > 0 {
+		hostMountsJSON, err := json.Marshal(containerSpec.HostMounts)
+		if err == nil {
+			gdnSpec.Properties["concourse.host_mounts"] = string(hostMountsJSON)
+		}
 	}
 
 	// By default set NetOutRule to whitelist all range of IPs

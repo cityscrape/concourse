@@ -75,6 +75,12 @@ type Container interface {
 	DBContainer() db.CreatedContainer
 }
 
+// HostMount represents a host path to mount into the container
+type HostMount struct {
+	HostPath      string `json:"host"`
+	ContainerPath string `json:"container"`
+}
+
 // ContainerSpec defines how to construct a container.
 type ContainerSpec struct {
 	// TeamID identifies the team to which the Container belongs.
@@ -105,6 +111,9 @@ type ContainerSpec struct {
 	// pointed to in these inputs may be on another worker, in which case they
 	// must be streamed.
 	Inputs []Input
+
+	// HostMounts defines host paths to be mounted directly into the container.
+	HostMounts []HostMount
 
 	// Caches is a list of container paths to cache after execution and
 	// re-mount to the volume. If the cached volume doesn't yet exist, an empty

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -190,6 +191,14 @@ func (cmd *WorkerCommand) buildUpBackendOpts(logger lager.Logger, cniNetwork run
 			return nil, fmt.Errorf("parsing allowed devices: %w", err)
 		}
 		opts = append(opts, runtime.WithAllowedDevices(devices))
+	}
+
+	if cmd.AllowedHostMounts != "" {
+		regex, err := regexp.Compile(fmt.Sprintf("^(?:%s)$", cmd.AllowedHostMounts))
+		if err != nil {
+			return nil, fmt.Errorf("invalid allowed-host-mounts regex: %w", err)
+		}
+		opts = append(opts, runtime.WithAllowedHostMounts(regex))
 	}
 
 	return opts, nil
