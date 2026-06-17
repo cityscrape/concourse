@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"golang.org/x/sys/unix"
 )
 
 type BackendSuite struct {
@@ -190,6 +192,60 @@ func (s *BackendSuite) TestCreateContainerSetsHandle() {
 	s.NoError(err)
 
 	s.Equal("handle", cont.Handle())
+}
+
+func (s *BackendSuite) TestCreateWithHostMountDeviceAllowsDeviceCgroup() {
+	fakeTask := new(libcontainerdfakes.FakeTask)
+	fakeTask.StartReturns(nil)
+
+	fakeContainer := new(libcontainerdfakes.FakeContainer)
+	fakeContainer.IDReturns("handle")
+	fakeContainer.NewTaskReturns(fakeTask, nil)
+
+	s.client.NewContainerReturns(fakeContainer, nil)
+
+	var stat unix.Stat_t
+	s.NoError(unix.Stat("/dev/null", &stat))
+	expectedMajor := int64(unix.Major(stat.Rdev))
+	expectedMinor := int64(unix.Minor(stat.Rdev))
+
+	backend, err := runtime.NewGardenBackend(s.client,
+		runtime.WithKiller(s.killer),
+		runtime.WithNetwork(s.network),
+		runtime.WithUserNamespace(s.userns),
+		runtime.WithIOManager(s.ioManager),
+		runtime.WithAllowedHostMounts(regexp.MustCompile("^/dev/null$")),
+	)
+	s.NoError(err)
+
+	hostMounts, err := json.Marshal([]map[string]string{{
+		"host":      "/dev/null",
+		"container": "/dev/null",
+	}})
+	s.NoError(err)
+
+	spec := minimumValidGdnSpec
+	spec.Properties = map[string]string{
+		"concourse.host_mounts": string(hostMounts),
+	}
+
+	_, err = backend.Create(spec)
+	s.NoError(err)
+
+	_, _, _, oci := s.client.NewContainerArgsForCall(0)
+	s.Contains(oci.Mounts, specs.Mount{
+		Source:      "/dev/null",
+		Destination: "/dev/null",
+		Type:        "bind",
+		Options:     []string{"bind", "rw"},
+	})
+	s.Contains(oci.Linux.Resources.Devices, specs.LinuxDeviceCgroup{
+		Allow:  true,
+		Type:   "c",
+		Major:  &expectedMajor,
+		Minor:  &expectedMinor,
+		Access: "rwm",
+	})
 }
 
 func (s *BackendSuite) TestCreateMaxContainersReached() {

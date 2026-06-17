@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"syscall"
 	"time"
 
 	"code.cloudfoundry.org/garden"
@@ -23,6 +24,7 @@ import (
 	"github.com/containerd/containerd/v2/pkg/cio"
 	"github.com/containerd/errdefs"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"golang.org/x/sys/unix"
 )
 
 //go:generate go run github.com/maxbrunsfeld/counterfeiter/v6 -generate
@@ -48,8 +50,8 @@ type GardenBackend struct {
 	// the deserialized hooks
 	ociHooks specs.Hooks
 
-	maxContainers  int
-	requestTimeout time.Duration
+	maxContainers     int
+	requestTimeout    time.Duration
 	createLock        TimeoutWithByPassLock
 	privilegedMode    bespec.PrivilegedMode
 	allowedDevices    []specs.LinuxDeviceCgroup
@@ -362,6 +364,7 @@ func (b *GardenBackend) createContainer(ctx context.Context, gdnSpec garden.Cont
 		return nil, fmt.Errorf("getting uid and gid maps: %w", err)
 	}
 
+	extraDevices := append([]specs.LinuxDeviceCgroup{}, b.allowedDevices...)
 	if mountsJSON, ok := gdnSpec.Properties["concourse.host_mounts"]; ok && mountsJSON != "" {
 		var hostMounts []struct {
 			HostPath      string `json:"host"`
@@ -371,6 +374,7 @@ func (b *GardenBackend) createContainer(ctx context.Context, gdnSpec garden.Cont
 			return nil, fmt.Errorf("parsing host mounts: %w", err)
 		}
 
+		hostMountDevices := make([]specs.LinuxDeviceCgroup, 0, len(hostMounts))
 		for _, hm := range hostMounts {
 			if b.allowedHostMounts == nil {
 				return nil, fmt.Errorf("host mounts requested but worker does not allow host mounts")
@@ -388,7 +392,8 @@ func (b *GardenBackend) createContainer(ctx context.Context, gdnSpec garden.Cont
 				return nil, fmt.Errorf("host mount %s is not allowed by worker", hm.HostPath)
 			}
 
-			if _, err := os.Stat(hm.HostPath); err != nil {
+			info, err := os.Stat(hm.HostPath)
+			if err != nil {
 				return nil, fmt.Errorf("host mount %s does not exist on worker: %w", hm.HostPath, err)
 			}
 
@@ -398,10 +403,17 @@ func (b *GardenBackend) createContainer(ctx context.Context, gdnSpec garden.Cont
 				Mode:    garden.BindMountModeRW,
 				Origin:  garden.BindMountOriginHost,
 			})
+
+			device, ok := hostMountDevice(info)
+			if ok {
+				hostMountDevices = append(hostMountDevices, device)
+			}
 		}
+
+		extraDevices = append(extraDevices, hostMountDevices...)
 	}
 
-	oci, err := bespec.OciSpec(b.initBinPath, b.seccompProfile, b.seccompProfileFuse, b.ociHooks, b.privilegedMode, gdnSpec, maxUid, maxGid, b.allowedDevices)
+	oci, err := bespec.OciSpec(b.initBinPath, b.seccompProfile, b.seccompProfileFuse, b.ociHooks, b.privilegedMode, gdnSpec, maxUid, maxGid, extraDevices)
 	if err != nil {
 		return nil, fmt.Errorf("garden spec to oci spec: %w", err)
 	}
@@ -418,6 +430,34 @@ func (b *GardenBackend) createContainer(ctx context.Context, gdnSpec garden.Cont
 		return nil, fmt.Errorf("convert properties to labels: %w", err)
 	}
 	return b.client.NewContainer(ctx, gdnSpec.Handle, labels, oci)
+}
+
+func hostMountDevice(info os.FileInfo) (specs.LinuxDeviceCgroup, bool) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return specs.LinuxDeviceCgroup{}, false
+	}
+
+	var deviceType string
+	switch {
+	case info.Mode()&os.ModeCharDevice != 0:
+		deviceType = "c"
+	case info.Mode()&os.ModeDevice != 0:
+		deviceType = "b"
+	default:
+		return specs.LinuxDeviceCgroup{}, false
+	}
+
+	major := int64(unix.Major(stat.Rdev))
+	minor := int64(unix.Minor(stat.Rdev))
+
+	return specs.LinuxDeviceCgroup{
+		Allow:  true,
+		Type:   deviceType,
+		Major:  &major,
+		Minor:  &minor,
+		Access: "rwm",
+	}, true
 }
 
 func (b *GardenBackend) startTask(ctx context.Context, cont containerd.Container, hermetic bool) error {
